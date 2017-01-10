@@ -1,10 +1,12 @@
 #!/usr/bin/env python2
 # -*- coding: utf8 -*-
 
+import os
 import sys
 import time
 import random
 import argparse
+import MySQLdb
 
 from selenium import webdriver
 from selenium.webdriver.support.ui import Select, WebDriverWait
@@ -20,7 +22,9 @@ def parse_args():
     return parser.parse_args()
 
 def start_browser():
-    br = webdriver.Firefox()
+    chromedriver = "/Users/konstantin/Downloads/chromedriver"
+    os.environ["webdriver.chrome.driver"] = chromedriver
+    br = webdriver.Chrome(chromedriver)
     br.implicitly_wait(10)
     return br
 
@@ -35,8 +39,6 @@ def get_ua():
     return ua
 
 def scrape_results(br):
-    # Xpath will find a subnode of h3, a[@href] specifies that we only want <a> nodes with
-    # any href attribute that are subnodes of <h3> tags that have a class of 'r'
     links = br.find_elements_by_xpath("//h3[@class='r']/a[@href]")
     results = []
     for link in links:
@@ -45,35 +47,45 @@ def scrape_results(br):
         title_url = (title, url)
         results.append(title_url)
     return results
-
 def go_to_page(br, page_num, search_term):
     page_num = page_num - 1
-    start_results = page_num * 100
+    start_results = page_num * 10
     start_results = str(start_results)
-    url = 'https://www.google.com/webhp?#num=100&start='+start_results+'&q='+search_term
-    print '[*] Fetching 100 results from page '+str(page_num+1)+' at '+url
+    url = 'https://www.google.com/ncr#num=10&start='+start_results+'&q='+search_term
+    print '[*] Fetching 10 results from page '+str(page_num+1)+' at '+url
     br.get(url)
     time.sleep(2)
 
 def main():
-    args = parse_args()
+    db = MySQLdb.connect(host="127.0.0.1",
+                         user="seo_user",
+                         passwd="seo_pass",
+                         db="seo");
+    cur = db.cursor()
+    cur.execute("select queries.query from queries left join search on search.query=queries.id where search.query is null and LENGTH(queries.query) - LENGTH(REPLACE(queries.query, ' ', '')) > 5 order by rand()");
+     
     br = start_browser()
-    if not args.search:
-        sys.exit("[!] Enter a term or phrase to search with the -s option: -s 'dan mcinerney'")
-    search_term = args.search
-    pages = args.pages
+    pages = 5
 
-    all_results = []
-    for page_num in xrange(int(pages)):
-        page_num = page_num+1 # since it starts at 0
-        go_to_page(br, page_num, search_term)
-        titles_urls = scrape_results(br)
-        for title in titles_urls:
-            all_results.append(title)
-
-    for result in all_results:
-        title = result[0]
-        url = result[1]
-        print '[+]', title, '--', url
-
+    for row in cur.fetchall():
+      all_results = []
+      search_term = row[0]
+      for page_num in xrange(int(pages)):
+          page_num = page_num+1 # since it starts at 0
+          go_to_page(br, page_num, search_term)
+          titles_urls = scrape_results(br)
+          for title in titles_urls:
+              all_results.append(title)
+      pos = 0;
+      for result in all_results:
+          pos = pos+1;
+          try:
+             cur.execute("INSERT INTO search(url,query,position) SELECT %s,id,%s FROM queries WHERE query=%s",(result[1],pos,search_term));
+             db.commit();
+          except:
+             db.rollback();
+      print '['+search_term+']'
+      time.sleep(250);
+    db.close();
+    br.close();
 main()
